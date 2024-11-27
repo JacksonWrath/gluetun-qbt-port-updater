@@ -89,7 +89,7 @@ func getQBTSettings(client *http.Client, cookies []*http.Cookie) (qBittorrentSet
 	if err != nil {
 		return qBittorrentSettings{}, err
 	}
-	logger.Info("got qbittorrent preferences", slog.String("status", res.Status), slog.Any("body", body))
+	logger.Debug("got qbittorrent preferences", slog.String("status", res.Status), slog.Any("body", body))
 
 	settings := new(qBittorrentSettings)
 	err = json.Unmarshal(body, settings)
@@ -166,7 +166,7 @@ func handleChangedPort(client *http.Client, cookies []*http.Cookie, port uint16)
 
 	body := bytes.NewBufferString("json=")
 	body.Write(jsonBuf)
-	logger.Info("setting qbittorrent preferences", slog.Any("body", body))
+	logger.Debug("setting qbittorrent preferences", slog.String("body", body.String()))
 
 	var req *http.Request
 	req, err = http.NewRequest(http.MethodPost, qBittorrentUrl+QBT_SET_PREFERENCES_API, body)
