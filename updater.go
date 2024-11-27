@@ -13,15 +13,17 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
 const (
-	PORT_FORWARD_API = "/v1/openvpn/portforwarded"
-
+	PORT_FORWARD_API        = "/v1/openvpn/portforwarded"
 	QBT_LOGIN_API           = "/api/v2/auth/login"
 	QBT_GET_PREFERENCES_API = "/api/v2/app/preferences"
 	QBT_SET_PREFERENCES_API = "/api/v2/app/setPreferences"
+
+	LOG_LEVEL_KEY = "LOG_LEVEL"
 )
 
 var (
@@ -31,8 +33,10 @@ var (
 	qBittorrentApiPort  = getEnvOrDefault("QBT_API_PORT", "8080")
 	qBittorrentUser     = getEnvOrDefault("QBT_USERNAME", "") // I realize the wrapper function is redundant in these cases.
 	qBittorrentPassword = getEnvOrDefault("QBT_PASSWORD", "") // Left this way for consistency.
-	qBittorrentUrl      = fmt.Sprintf("http://%s:%s", qBittorrentAddress, qBittorrentApiPort)
-	gluetunUrl          = fmt.Sprintf("http://%s:%s", gluetunAddress, gluetunApiPort)
+
+	qBittorrentUrl = fmt.Sprintf("http://%s:%s", qBittorrentAddress, qBittorrentApiPort)
+	gluetunUrl     = fmt.Sprintf("http://%s:%s", gluetunAddress, gluetunApiPort)
+	logger         = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevelFromEnv()}))
 )
 
 type portForwardResponse struct {
@@ -51,11 +55,21 @@ func getEnvOrDefault(key string, defaultVal string) string {
 	return val
 }
 
+func logLevelFromEnv() slog.Level {
+	envLogLevel := strings.ToUpper(getEnvOrDefault(LOG_LEVEL_KEY, "INFO"))
+	levelVar := &slog.LevelVar{}
+	err := levelVar.UnmarshalText([]byte(envLogLevel))
+	if err != nil {
+		log.Fatal("Invalid LOG_LEVEL: ", err.Error())
+	}
+	return levelVar.Level()
+}
+
 func getQBTSettings(client *http.Client, cookies []*http.Cookie) (qBittorrentSettings, error) {
 	// Make a new request.
 	req, err := http.NewRequest(http.MethodGet, qBittorrentUrl+QBT_GET_PREFERENCES_API, nil)
 	if err != nil {
-		slog.Error("failed to create request", slog.Any("err", err))
+		logger.Error("failed to create request", slog.Any("err", err))
 		return qBittorrentSettings{}, err
 	}
 
@@ -75,7 +89,7 @@ func getQBTSettings(client *http.Client, cookies []*http.Cookie) (qBittorrentSet
 	if err != nil {
 		return qBittorrentSettings{}, err
 	}
-	slog.Info("got qbittorrent preferences", slog.String("status", res.Status), slog.Any("body", body))
+	logger.Info("got qbittorrent preferences", slog.String("status", res.Status), slog.Any("body", body))
 
 	settings := new(qBittorrentSettings)
 	err = json.Unmarshal(body, settings)
@@ -83,12 +97,12 @@ func getQBTSettings(client *http.Client, cookies []*http.Cookie) (qBittorrentSet
 }
 
 func qBittorrentLogin(client *http.Client) ([]*http.Cookie, error) {
-	slog.Info("logging into qbittorrent")
+	logger.Info("logging into qbittorrent")
 	res, err := client.PostForm(qBittorrentUrl+QBT_LOGIN_API, url.Values{
 		"username": {qBittorrentUser},
 		"password": {qBittorrentPassword}})
 	if err != nil {
-		slog.Error("failed qbittorrent login", slog.Any("err", err))
+		logger.Error("failed qbittorrent login", slog.Any("err", err))
 		return nil, err
 	}
 
@@ -99,21 +113,21 @@ func qBittorrentLogin(client *http.Client) ([]*http.Cookie, error) {
 		return nil, fmt.Errorf("request failed: %s", res.Status)
 	}
 
-	slog.Info("login successful", slog.Any("body", body))
+	logger.Info("login successful", slog.Any("body", body))
 	defer res.Body.Close()
 
 	for _, c := range res.Cookies() {
-		slog.Info("cookie", slog.String("cookie", c.String()))
+		logger.Info("cookie", slog.String("cookie", c.String()))
 	}
 	return res.Cookies(), err
 }
 
 func getGluetunForwardedPort() (uint16, error) {
-	slog.Debug("fetching forwarded port")
+	logger.Debug("fetching forwarded port")
 	url := gluetunUrl + PORT_FORWARD_API
 	resp, err := http.Get(url)
 	if err != nil {
-		slog.Error("failed to fetch forwarded port",
+		logger.Error("failed to fetch forwarded port",
 			slog.String("url", url),
 			slog.String("err", err.Error()))
 		return 0, err
@@ -122,20 +136,20 @@ func getGluetunForwardedPort() (uint16, error) {
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		slog.Error("failed to read response body",
+		logger.Error("failed to read response body",
 			slog.String("err", err.Error()))
 		return 0, err
 	}
 
 	pfr := new(portForwardResponse)
 	if err := json.Unmarshal(data, pfr); err != nil {
-		slog.Error("failed to unmarshal response body",
+		logger.Error("failed to unmarshal response body",
 			slog.Any("body", data),
 			slog.String("err", err.Error()))
 		return 0, err
 	}
 
-	slog.Debug("successfully fetched forwarded port", slog.Int("port", int(pfr.Port)))
+	logger.Debug("successfully fetched forwarded port", slog.Int("port", int(pfr.Port)))
 	return pfr.Port, nil
 }
 
@@ -146,13 +160,13 @@ func handleChangedPort(client *http.Client, cookies []*http.Cookie, port uint16)
 
 	jsonBuf, err := json.Marshal(newSettings)
 	if err != nil {
-		slog.Error("failed to marshal settings", slog.Any("settings", newSettings))
+		logger.Error("failed to marshal settings", slog.Any("settings", newSettings))
 		return err
 	}
 
 	body := bytes.NewBufferString("json=")
 	body.Write(jsonBuf)
-	slog.Info("setting qbittorrent preferences", slog.Any("body", body))
+	logger.Info("setting qbittorrent preferences", slog.Any("body", body))
 
 	var req *http.Request
 	req, err = http.NewRequest(http.MethodPost, qBittorrentUrl+QBT_SET_PREFERENCES_API, body)
@@ -172,11 +186,11 @@ func handleChangedPort(client *http.Client, cookies []*http.Cookie, port uint16)
 		if err == nil {
 			err = fmt.Errorf("request failed: %s", res.Status)
 		}
-		slog.Error("failed to set qbittorrent preferences", slog.Any("err", err))
+		logger.Error("failed to set qbittorrent preferences", slog.Any("err", err))
 		return err
 	}
 
-	slog.Info("successfully updated listen port")
+	logger.Info("successfully updated listen port")
 	return nil
 }
 
@@ -189,7 +203,7 @@ func waitForConnUp(address string) {
 			defer conn.Close()
 			break
 		}
-		slog.Debug(fmt.Sprintf("Failed to connect to %s: %s", address, err.Error()))
+		logger.Debug(fmt.Sprintf("Failed to connect to %s: %s", address, err.Error()))
 	}
 }
 
@@ -204,9 +218,9 @@ func main() {
 		Jar: jar,
 	}
 
-	slog.Info("Checking if qBittorrent is up")
+	logger.Info("Checking if qBittorrent is up")
 	waitForConnUp(fmt.Sprintf("%s:%s", qBittorrentAddress, qBittorrentApiPort))
-	slog.Info("Checking if Gluetun is up")
+	logger.Info("Checking if Gluetun is up")
 	waitForConnUp(fmt.Sprintf("%s:%s", gluetunAddress, gluetunApiPort))
 
 	// Login to qbittorrent if needed and get cookies for later use.
@@ -226,7 +240,7 @@ func main() {
 		log.Fatal(err.Error())
 	}
 
-	slog.Info("starting the port-forward watcher",
+	logger.Info("starting the port-forward watcher",
 		slog.String("gluetun_url", gluetunUrl+PORT_FORWARD_API),
 		slog.Duration("interval", interval))
 
@@ -241,13 +255,13 @@ func main() {
 			log.Fatal(err.Error())
 		}
 
-		slog.Debug("got forwarded port",
+		logger.Debug("got forwarded port",
 			slog.Int("old", int(lastPort)),
 			slog.Int("new", int(port)),
 			slog.Bool("changed", lastPort != port))
 
 		if lastPort != port {
-			slog.Info("port changed, handling", slog.Int("old", int(lastPort)), slog.Int("new", int(port)))
+			logger.Info("port changed, handling", slog.Int("old", int(lastPort)), slog.Int("new", int(port)))
 
 			lastPort = port
 			if err := handleChangedPort(client, cookies, port); err != nil {
