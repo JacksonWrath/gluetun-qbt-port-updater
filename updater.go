@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -179,6 +180,19 @@ func handleChangedPort(client *http.Client, cookies []*http.Cookie, port uint16)
 	return nil
 }
 
+func waitForConnUp(address string) {
+	interval := time.Duration(time.Second)
+	t := time.NewTicker(interval)
+	for range t.C {
+		conn, err := net.DialTimeout("tcp", address, time.Second*5)
+		if err == nil {
+			defer conn.Close()
+			break
+		}
+		slog.Debug(fmt.Sprintf("Failed to connect to %s: %s", address, err.Error()))
+	}
+}
+
 func main() {
 	interval := *flag.Duration("interval", time.Second, "how often to check the API")
 	jar, err := cookiejar.New(nil)
@@ -189,6 +203,11 @@ func main() {
 	client := &http.Client{
 		Jar: jar,
 	}
+
+	slog.Info("Checking if qBittorrent is up")
+	waitForConnUp(fmt.Sprintf("%s:%s", qBittorrentAddress, qBittorrentApiPort))
+	slog.Info("Checking if Gluetun is up")
+	waitForConnUp(fmt.Sprintf("%s:%s", gluetunAddress, gluetunApiPort))
 
 	// Login to qbittorrent if needed and get cookies for later use.
 	cookies := []*http.Cookie{}
