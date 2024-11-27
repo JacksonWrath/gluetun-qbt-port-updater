@@ -1,3 +1,3 @@
-module github.com/gluetun-qb-port-updater
+module github.com/JacksonWrath/gluetun-qb-port-updater
 
 go 1.23.3
