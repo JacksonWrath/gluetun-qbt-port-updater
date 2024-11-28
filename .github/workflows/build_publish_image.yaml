@@ -48,4 +48,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-      
+          # Disabling provenance because of dizzying list of issues it causes:
+          #   https://github.com/docker-mailserver/docker-mailserver/issues/3582
+          # See also: https://github.com/docker/build-push-action/issues/820#issuecomment-1486849546
+          provenance: false
