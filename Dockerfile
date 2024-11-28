@@ -7,6 +7,6 @@ COPY go.mod updater.go ./
 RUN go mod download
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o updater .
 
-FROM --platform=$TARGETPLATFORM alpine:3 AS release-image
+FROM alpine:3 AS release-image
 COPY --from=build-image /app/updater /updater
 ENTRYPOINT ["/updater"]

@@ -149,7 +149,7 @@ func getGluetunForwardedPort() (uint16, error) {
 		return 0, err
 	}
 
-	logger.Debug("successfully fetched forwarded port", slog.Int("port", int(pfr.Port)))
+	logger.Debug("successfully fetched forwarded port", slog.Int("forwarded-port", int(pfr.Port)))
 	return pfr.Port, nil
 }
 
@@ -203,7 +203,7 @@ func waitForConnUp(address string) {
 			defer conn.Close()
 			break
 		}
-		logger.Debug(fmt.Sprintf("Failed to connect to %s: %s", address, err.Error()))
+		logger.Debug("Failed to connect", slog.String("address", address), slog.Any("err", err.Error()))
 	}
 }
 
@@ -245,7 +245,14 @@ func main() {
 		slog.Duration("interval", interval))
 
 	// Last observed forwaded port.
-	lastPort := settings.ListenPort
+	qbtPort := settings.ListenPort
+	lastPort, err := getGluetunForwardedPort()
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	logger.Info("Current port set in qBittorrent", slog.Int("qbt-port", int(qbtPort)))
+	logger.Info("Current forwarded port from Gluetun", slog.Int("forwarded-port", int(lastPort)))
 
 	t := time.NewTicker(interval)
 	for range t.C {
@@ -255,18 +262,16 @@ func main() {
 			log.Fatal(err.Error())
 		}
 
-		logger.Debug("got forwarded port",
-			slog.Int("old", int(lastPort)),
-			slog.Int("new", int(port)),
-			slog.Bool("changed", lastPort != port))
-
 		if lastPort != port {
-			logger.Info("port changed, handling", slog.Int("old", int(lastPort)), slog.Int("new", int(port)))
-
+			logger.Info("Forwarded port from Gluetun changed", slog.Int("previous-port", int(lastPort)), slog.Int("forwarded-port", int(port)))
 			lastPort = port
+		}
+		if port != qbtPort && port != 0 {
+			logger.Info("Updating qBittorrent port", slog.Int("qbt-port", int(qbtPort)), slog.Int("forwarded-port", int(port)))
 			if err := handleChangedPort(client, cookies, port); err != nil {
 				log.Fatal(err.Error())
 			}
+			qbtPort = port
 		}
 	}
 }
